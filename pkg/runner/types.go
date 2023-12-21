@@ -24,4 +24,5 @@ type cliConfig struct {
 	useUDP          bool
 	verbose         bool
 	showErrors      bool
+	proxy           string
 }

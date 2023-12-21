@@ -42,7 +42,9 @@ func ScanTargets(targets []plugins.Target, config Config) ([]plugins.Service, er
 	if config.UDP {
 		return UDPScan(targets, config)
 	}
-
+	// set the global proxy addr
+	Socks5Proxy = config.Proxy
+	//
 	for _, target := range targets {
 		result, err := config.SimpleScanTarget(target)
 		if err == nil && result != nil {

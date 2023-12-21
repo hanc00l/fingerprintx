@@ -17,9 +17,14 @@ package scan
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/remeh/sizedwaitgroup"
+	"golang.org/x/net/proxy"
 	"log"
 	"net"
+	"net/url"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
@@ -28,6 +33,7 @@ import (
 var dialer = &net.Dialer{
 	Timeout: 2 * time.Second,
 }
+var Socks5Proxy string
 
 var sortedTCPPlugins = make([]plugins.Plugin, 0)
 var sortedTCPTLSPlugins = make([]plugins.Plugin, 0)
@@ -123,7 +129,8 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 	// first check the default port mappings for TCP / TLS
 	for _, plugin := range sortedTCPPlugins {
 		if plugin.PortPriority(port) {
-			conn, err := DialTCP(ip, port)
+			//conn, err := DialTCP(ip, port)
+			conn, err := DialTCPOverSocks5(ip, port)
 			if err != nil {
 				return nil, fmt.Errorf("unable to connect, err = %w", err)
 			}
@@ -137,7 +144,8 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 		}
 	}
 
-	tlsConn, tlsErr := DialTLS(target)
+	//tlsConn, tlsErr := DialTLS(target)
+	tlsConn, tlsErr := DialTLSOverSocks5(target)
 	isTLS := tlsErr == nil
 	if isTLS {
 		for _, plugin := range sortedTCPTLSPlugins {
@@ -164,40 +172,72 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 	}
 
 	// go through each service mapping and check it
-
+	var scanResults *plugins.Service
+	var scanErr error
+	sw := sizedwaitgroup.New(10)
+	mutex := &sync.Mutex{}
 	if isTLS {
 		for _, plugin := range sortedTCPTLSPlugins {
-			tlsConn, err := DialTLS(target)
-			if err != nil {
-				return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
+			if scanResults != nil || scanErr != nil {
+				break
 			}
-			result, err := simplePluginRunner(tlsConn, target, c, plugin)
-			if err != nil && c.Verbose {
-				log.Printf("error: %v scanning %v\n", err, target.Address.String())
-			}
-			if result != nil && err == nil {
-				// identified plugin match
-				return result, nil
-			}
+			sw.Add()
+			go func(plugin plugins.Plugin) {
+				defer sw.Done()
+				//tlsConn, err := DialTLS(target)
+				tlsConn, err := DialTLSOverSocks5(target)
+				if err != nil {
+					mutex.Lock()
+					scanErr = fmt.Errorf("unable to connect, err = %w", err)
+					mutex.Unlock()
+					return
+				}
+				result, err := simplePluginRunner(tlsConn, target, c, plugin)
+				if err != nil && c.Verbose {
+					log.Printf("error: %v scanning %v\n", err, target.Address.String())
+				}
+				if result != nil && err == nil {
+					// identified plugin match
+					mutex.Lock()
+					scanResults = result
+					mutex.Unlock()
+					return
+				}
+			}(plugin)
 		}
 	} else {
 		for _, plugin := range sortedTCPPlugins {
-			conn, err := DialTCP(ip, port)
-			if err != nil {
-				return nil, fmt.Errorf("unable to connect, err = %w", err)
+			if scanResults != nil || scanErr != nil {
+				break
 			}
-			result, err := simplePluginRunner(conn, target, c, plugin)
-			if err != nil && c.Verbose {
-				log.Printf("error: %v scanning %v\n", err, target.Address.String())
-			}
-			if result != nil && err == nil {
-				// identified plugin match
-				return result, nil
-			}
+			sw.Add()
+			go func(plugin plugins.Plugin) {
+				defer sw.Done()
+				//conn, err := DialTCP(ip, port)
+				conn, err := DialTCPOverSocks5(ip, port)
+				if err != nil {
+					mutex.Lock()
+					scanErr = fmt.Errorf("unable to connect, err = %w", err)
+					mutex.Unlock()
+					return
+				}
+				result, err := simplePluginRunner(conn, target, c, plugin)
+				if err != nil && c.Verbose {
+					log.Printf("error: %v scanning %v\n", err, target.Address.String())
+				}
+				if result != nil && err == nil {
+					// identified plugin match
+					mutex.Lock()
+					scanResults = result
+					mutex.Unlock()
+					return
+				}
+			}(plugin)
 		}
 	}
-
-	return nil, nil
+	sw.Wait()
+	return scanResults, scanErr
+	//return nil, nil
 }
 
 // This will attempt to close the provided Conn after running the plugin.
@@ -249,4 +289,77 @@ func DialTCP(ip string, port uint16) (net.Conn, error) {
 func DialUDP(ip string, port uint16) (net.Conn, error) {
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	return dialer.Dial("udp", addr)
+}
+
+func DialTCPOverSocks5(ip string, port uint16) (net.Conn, error) {
+	var conn net.Conn
+	if Socks5Proxy == "" {
+		var err error
+		conn, err = DialTCP(ip, port)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		dialerSocks5, err := Socks5Dialer(dialer)
+		if err != nil {
+			return nil, err
+		}
+		conn, err = dialerSocks5.Dial("tcp", net.JoinHostPort(ip, fmt.Sprintf("%d", port)))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return conn, nil
+}
+
+func DialTLSOverSocks5(target plugins.Target) (net.Conn, error) {
+	var conn net.Conn
+	config := &tlsConfig
+	if target.Host != "" {
+		// make a new config clone to add the custom host for each new tls connection
+		c := config.Clone()
+		c.ServerName = target.Host
+		config = c
+	}
+	if Socks5Proxy == "" {
+		return tls.DialWithDialer(dialer, "tcp", target.Address.String(), config)
+	} else {
+		dialerSocks5, err := Socks5Dialer(dialer)
+		if err != nil {
+			return nil, err
+		}
+		conn, err = dialerSocks5.Dial("tcp", target.Address.String())
+		if err != nil {
+			return nil, err
+		}
+		conn = tls.Client(conn, config)
+		return conn, nil
+	}
+}
+
+func Socks5Dialer(forward *net.Dialer) (proxy.Dialer, error) {
+	u, err := url.Parse(Socks5Proxy)
+	if err != nil {
+		return nil, err
+	}
+	if strings.ToLower(u.Scheme) != "socks5" {
+		return nil, fmt.Errorf("%s", "Only support socks5")
+	}
+	var auth proxy.Auth
+	var dialerProxy proxy.Dialer
+	if u.User.String() != "" {
+		password, _ := u.User.Password()
+		auth = proxy.Auth{
+			User:     u.User.Username(),
+			Password: password,
+		}
+		dialerProxy, err = proxy.SOCKS5("tcp", u.Host, &auth, forward)
+	} else {
+		dialerProxy, err = proxy.SOCKS5("tcp", u.Host, nil, forward)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return dialerProxy, nil
 }

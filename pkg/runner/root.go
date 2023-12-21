@@ -74,6 +74,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&config.verbose, "verbose", "v", false, "verbose mode")
 	rootCmd.PersistentFlags().
 		IntVarP(&config.timeout, "timeout", "w", 2000, "timeout (milliseconds)")
+	rootCmd.PersistentFlags().
+		StringVarP(&config.proxy, "proxy", "p", "", "socks5 proxy(socks5://user:password@host:port)")
 }
 
 func Execute() {
