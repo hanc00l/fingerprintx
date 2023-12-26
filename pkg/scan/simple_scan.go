@@ -308,6 +308,7 @@ func DialTCPOverSocks5(ip string, port uint16) (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
+
 	}
 	return conn, nil
 }
@@ -338,28 +339,17 @@ func DialTLSOverSocks5(target plugins.Target) (net.Conn, error) {
 }
 
 func Socks5Dialer(forward *net.Dialer) (proxy.Dialer, error) {
-	u, err := url.Parse(Socks5Proxy)
-	if err != nil {
-		return nil, err
-	}
-	if strings.ToLower(u.Scheme) != "socks5" {
+	uri, err := url.Parse(Socks5Proxy)
+	if strings.ToLower(uri.Scheme) != "socks5" {
 		return nil, fmt.Errorf("%s", "Only support socks5")
 	}
-	var auth proxy.Auth
-	var dialerProxy proxy.Dialer
-	if u.User.String() != "" {
-		password, _ := u.User.Password()
-		auth = proxy.Auth{
-			User:     u.User.Username(),
-			Password: password,
-		}
-		dialerProxy, err = proxy.SOCKS5("tcp", u.Host, &auth, forward)
-	} else {
-		dialerProxy, err = proxy.SOCKS5("tcp", u.Host, nil, forward)
-	}
-
 	if err != nil {
 		return nil, err
+	} else {
+		if dialerSocks5, err := proxy.FromURL(uri, forward); err != nil {
+			return nil, err
+		} else {
+			return dialerSocks5, nil
+		}
 	}
-	return dialerProxy, nil
 }
