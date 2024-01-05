@@ -30,9 +30,6 @@ import (
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
 )
 
-var dialer = &net.Dialer{
-	Timeout: 2 * time.Second,
-}
 var Socks5Proxy string
 
 var sortedTCPPlugins = make([]plugins.Plugin, 0)
@@ -158,7 +155,8 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 					// identified plugin match
 					return result, nil
 				}
-				tlsConn, err = DialTLS(target)
+				//tlsConn, err = DialTLS(target)
+				tlsConn, err = DialTLSOverSocks5(target)
 				if err != nil {
 					return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
 				}
@@ -278,21 +276,33 @@ func DialTLS(target plugins.Target) (net.Conn, error) {
 		c.ServerName = target.Host
 		config = c
 	}
+	var dialer = &net.Dialer{
+		Timeout: 2 * time.Second,
+	}
 	return tls.DialWithDialer(dialer, "tcp", target.Address.String(), config)
 }
 
 func DialTCP(ip string, port uint16) (net.Conn, error) {
+	var dialer = &net.Dialer{
+		Timeout: 2 * time.Second,
+	}
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	return dialer.Dial("tcp", addr)
 }
 
 func DialUDP(ip string, port uint16) (net.Conn, error) {
+	var dialer = &net.Dialer{
+		Timeout: 2 * time.Second,
+	}
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	return dialer.Dial("udp", addr)
 }
 
 func DialTCPOverSocks5(ip string, port uint16) (net.Conn, error) {
 	var conn net.Conn
+	var dialer = &net.Dialer{
+		Timeout: 2 * time.Second,
+	}
 	if Socks5Proxy == "" {
 		var err error
 		conn, err = DialTCP(ip, port)
@@ -315,6 +325,9 @@ func DialTCPOverSocks5(ip string, port uint16) (net.Conn, error) {
 
 func DialTLSOverSocks5(target plugins.Target) (net.Conn, error) {
 	var conn net.Conn
+	var dialer = &net.Dialer{
+		Timeout: 2 * time.Second,
+	}
 	config := &tlsConfig
 	if target.Host != "" {
 		// make a new config clone to add the custom host for each new tls connection
