@@ -30,4 +30,7 @@ type Config struct {
 
 	// Prints logging messages to stderr
 	Verbose bool
+
+	// Proxy to use for requests
+	Proxy string
 }

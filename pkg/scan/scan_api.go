@@ -18,6 +18,7 @@ import (
 	"log"
 
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
+	"github.com/praetorian-inc/fingerprintx/third_party/cryptolib/ssh"
 )
 
 func UDPScan(targets []plugins.Target, config Config) ([]plugins.Service, error) {
@@ -42,6 +43,9 @@ func ScanTargets(targets []plugins.Target, config Config) ([]plugins.Service, er
 	if config.UDP {
 		return UDPScan(targets, config)
 	}
+	// set the global proxy addr
+	Socks5Proxy = config.Proxy
+	ssh.Socks5Proxy = config.Proxy
 
 	for _, target := range targets {
 		result, err := config.SimpleScanTarget(target)

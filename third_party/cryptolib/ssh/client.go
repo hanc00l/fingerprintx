@@ -9,9 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 // Client implements a traditional SSH client that supports shells,
@@ -184,6 +188,67 @@ func Dial(network, addr string, config *ClientConfig) (*Client, error) {
 		return nil, err
 	}
 	return NewClient(c, chans, reqs), nil
+}
+
+/*
+ To support socks5 proxy,we weed set the Socks5Proxy server addr
+	and use DialTCPOverSocks5 instead of Dial
+*/
+
+var Socks5Proxy string
+
+func DialOverSocks5(network, addr string, config *ClientConfig) (*Client, error) {
+	//conn, err := net.DialTimeout(network, addr, config.Timeout)
+	conn, err := DialTCPOverSocks5(addr)
+	if err != nil {
+		return nil, err
+	}
+	c, chans, reqs, err := NewClientConn(conn, addr, config)
+	if err != nil {
+		return nil, err
+	}
+	return NewClient(c, chans, reqs), nil
+}
+
+func Socks5Dialer(forward *net.Dialer) (proxy.Dialer, error) {
+	uri, err := url.Parse(Socks5Proxy)
+	if strings.ToLower(uri.Scheme) != "socks5" {
+		return nil, fmt.Errorf("%s", "Only support socks5")
+	}
+	if err != nil {
+		return nil, err
+	} else {
+		if dialerSocks5, err := proxy.FromURL(uri, forward); err != nil {
+			return nil, err
+		} else {
+			return dialerSocks5, nil
+		}
+	}
+}
+
+func DialTCPOverSocks5(addr string) (net.Conn, error) {
+	var conn net.Conn
+	var dialer = &net.Dialer{
+		Timeout: 2 * time.Second,
+	}
+	if Socks5Proxy == "" {
+		var err error
+		conn, err = dialer.Dial("tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		dialerSocks5, err := Socks5Dialer(dialer)
+		if err != nil {
+			return nil, err
+		}
+		conn, err = dialerSocks5.Dial("tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+
+	}
+	return conn, nil
 }
 
 // HostKeyCallback is the function type used for verifying server

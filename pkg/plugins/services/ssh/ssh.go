@@ -263,7 +263,8 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		"3des-cbc",
 	)
 
-	authClient, err := ssh.Dial("tcp", target.Address.String(), &conf)
+	//authClient, err := ssh.Dial("tcp", target.Address.String(), &conf)
+	authClient, err := ssh.DialOverSocks5("tcp", target.Address.String(), &conf)
 
 	if err != nil {
 		passwordAuth = strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "keyboard-interactive")
